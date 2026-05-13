@@ -1,0 +1,27 @@
+{
+  "nodes": [
+    {"component": "ts-order-other-service", "state": ["HIGH_ERROR_RATE"], "timestamp": 1723565523877},
+    {"component": "ts-seat-service", "state": ["HIGH_ERROR_RATE"], "timestamp": 1723565523576},
+    {"component": "ts-travel2-service", "state": ["HIGH_ERROR_RATE"], "timestamp": 1723565569198},
+    {"component": "ts-route-plan-service", "state": ["HIGH_ERROR_RATE"], "timestamp": 1723565583768},
+    {"component": "ts-travel-plan-service", "state": ["HIGH_ERROR_RATE"], "timestamp": 1723565583514},
+    {"component": "ts-ui-dashboard", "state": ["HIGH_ERROR_RATE"], "timestamp": 1723565523000}
+  ],
+  "edges": [
+    {"source": "ts-order-other-service", "target": "ts-seat-service"},
+    {"source": "ts-seat-service", "target": "ts-travel2-service"},
+    {"source": "ts-travel2-service", "target": "ts-route-plan-service"},
+    {"source": "ts-travel2-service", "target": "ts-ui-dashboard"},
+    {"source": "ts-route-plan-service", "target": "ts-travel-plan-service"},
+    {"source": "ts-travel-plan-service", "target": "ts-ui-dashboard"}
+  ],
+  "root_causes": [
+    {
+      "component": "ts-order-other-service", 
+      "state": ["HIGH_ERROR_RATE"], 
+      "timestamp": 1723565523877,
+      "error_details": "IllegalArgumentException: Invalid UUID string: tickets - ts-seat-service calling DELETE /api/v1/orderOtherService/orderOther/{orderId} with 'tickets' as orderId parameter"
+    }
+  ],
+  "component_to_service": {}
+}

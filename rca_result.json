@@ -1,0 +1,29 @@
+{
+  "nodes": [
+    {"component": "ts-config-service", "state": ["UNAVAILABLE"], "timestamp": 1754978417795},
+    {"component": "ts-seat-service", "state": ["HIGH_ERROR_RATE"], "timestamp": 1754978417850},
+    {"component": "ts-travel-service", "state": ["HIGH_ERROR_RATE"], "timestamp": 1754978417835},
+    {"component": "ts-travel2-service", "state": ["HIGH_ERROR_RATE"], "timestamp": 1754978418421},
+    {"component": "ts-travel-plan-service", "state": ["HIGH_ERROR_RATE"], "timestamp": 1754978418367},
+    {"component": "ts-route-plan-service", "state": ["HIGH_ERROR_RATE"], "timestamp": 1754978418372},
+    {"component": "ts-preserve-service", "state": ["HIGH_ERROR_RATE"], "timestamp": 1754978417795},
+    {"component": "ts-ui-dashboard", "state": ["HIGH_ERROR_RATE"], "timestamp": 1754978417797},
+    {"component": "loadgenerator", "state": ["HIGH_ERROR_RATE"], "timestamp": 1754978417796}
+  ],
+  "edges": [
+    {"source": "ts-config-service", "target": "ts-seat-service"},
+    {"source": "ts-seat-service", "target": "ts-travel-service"},
+    {"source": "ts-seat-service", "target": "ts-travel2-service"},
+    {"source": "ts-travel-service", "target": "ts-travel-plan-service"},
+    {"source": "ts-travel-plan-service", "target": "ts-route-plan-service"},
+    {"source": "ts-travel-service", "target": "ts-preserve-service"},
+    {"source": "ts-travel-service", "target": "ts-ui-dashboard"},
+    {"source": "ts-travel2-service", "target": "ts-ui-dashboard"},
+    {"source": "ts-preserve-service", "target": "ts-ui-dashboard"},
+    {"source": "ts-ui-dashboard", "target": "loadgenerator"}
+  ],
+  "root_causes": [
+    {"component": "ts-config-service", "state": ["UNAVAILABLE"], "timestamp": 1754978417795}
+  ],
+  "component_to_service": {}
+}
