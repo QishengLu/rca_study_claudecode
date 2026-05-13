@@ -19,7 +19,8 @@ import time
 
 # ── 配置 ────────────────────────────────────────────────────────────────────
 
-CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "/home/nn/.vscode-server/extensions/anthropic.claude-code-2.1.96-linux-x64/resources/native-binary/claude")
+import shutil as _shutil
+CLAUDE_BIN = os.environ.get("CLAUDE_BIN") or _shutil.which("claude") or "claude"
 RCA_MODEL = os.environ.get("UTU_LLM_MODEL", os.environ.get("RCA_MODEL", "qwen3.5-plus"))
 CODING_PLAN_BASE_URL = os.environ.get(
     "ANTHROPIC_BASE_URL_OVERRIDE",
