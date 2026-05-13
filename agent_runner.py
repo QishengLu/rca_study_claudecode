@@ -22,9 +22,22 @@ import time
 import shutil as _shutil
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN") or _shutil.which("claude") or "claude"
 RCA_MODEL = os.environ.get("UTU_LLM_MODEL", os.environ.get("RCA_MODEL", "qwen3.5-plus"))
-CODING_PLAN_BASE_URL = os.environ.get(
-    "ANTHROPIC_BASE_URL_OVERRIDE",
-    "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+
+# Resolve Anthropic-compat base URL: prefer explicit override → ANTHROPIC_BASE_URL
+# → UTU_LLM_BASE_URL (the canonical sota-rca-study LLM endpoint, e.g.
+# dashscope qwen compatible-mode), → Aliyun Coding Plan fallback.
+#
+# Note: Claude Code CLI expects an Anthropic-compatible HTTP API. Aliyun
+# DashScope's standard qwen endpoint (compatible-mode/v1) is OpenAI-compatible
+# and will NOT drive Claude Code. Use one of:
+#   - Aliyun Coding Plan:    https://coding.dashscope.aliyuncs.com/apps/anthropic
+#   - dashscope qwen anthropic-compat (if you have one): https://dashscope.aliyuncs.com/api/.../apps/anthropic
+# If UTU_LLM_BASE_URL is OpenAI-compatible, you'll see a 4xx from the CLI.
+CODING_PLAN_BASE_URL = (
+    os.environ.get("ANTHROPIC_BASE_URL_OVERRIDE")
+    or os.environ.get("ANTHROPIC_BASE_URL")
+    or os.environ.get("UTU_LLM_BASE_URL")
+    or "https://dashscope.aliyuncs.com/api/v2/apps/anthropic"
 )
 TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT", "1800"))
 # 预拷贝的干净数据目录（只含白名单 parquet，无答案文件）
@@ -239,7 +252,7 @@ def _compress_to_json(
     import anthropic
 
     client = anthropic.Anthropic(
-        api_key=os.environ["ANTHROPIC_API_KEY"],
+        api_key=os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("UTU_LLM_API_KEY") or "",
         base_url=CODING_PLAN_BASE_URL,
     )
 
@@ -376,10 +389,14 @@ def main():
         "--add-dir", sandbox_dir,
     ]
 
-    # 环境变量：Coding Plan endpoint + key
+    # 环境变量：Anthropic-compat endpoint + key.
+    # Auto-fall-back ANTHROPIC_API_KEY to UTU_LLM_API_KEY so a single dashscope
+    # qwen key can drive both the rest of the framework AND Claude Code CLI
+    # (provided UTU_LLM_BASE_URL points at an Anthropic-compatible endpoint).
     env = {**os.environ}
     env["ANTHROPIC_BASE_URL"] = CODING_PLAN_BASE_URL
-    # ANTHROPIC_API_KEY 从环境继承（运行前 export）
+    if not env.get("ANTHROPIC_API_KEY"):
+        env["ANTHROPIC_API_KEY"] = env.get("UTU_LLM_API_KEY", "")
 
     print(f"[ClaudeCode] Starting: model={RCA_MODEL}, sandbox={sandbox_dir}",
           file=sys.stderr)
