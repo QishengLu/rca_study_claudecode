@@ -23,22 +23,23 @@ import shutil as _shutil
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN") or _shutil.which("claude") or "claude"
 RCA_MODEL = os.environ.get("UTU_LLM_MODEL", os.environ.get("RCA_MODEL", "qwen3.5-plus"))
 
-# Resolve Anthropic-compat base URL: prefer explicit override → ANTHROPIC_BASE_URL
-# → UTU_LLM_BASE_URL (the canonical sota-rca-study LLM endpoint, e.g.
-# dashscope qwen compatible-mode), → Aliyun Coding Plan fallback.
+# Resolve Anthropic-compat base URL.
+# DashScope provides a working Anthropic-compatible endpoint at
+# `https://dashscope.aliyuncs.com/apps/anthropic` that accepts the standard
+# qwen models (qwen-plus, qwen-max, qwen3-coder-plus, qwen3-max, qwen3.5-plus,
+# qwen-flash). The same DASHSCOPE_API_KEY used for the rest of the framework
+# (compatible-mode OpenAI endpoint) works here — auth is `Authorization: Bearer`.
 #
-# Note: Claude Code CLI expects an Anthropic-compatible HTTP API. Aliyun
-# DashScope's standard qwen endpoint (compatible-mode/v1) is OpenAI-compatible
-# and will NOT drive Claude Code. Use one of:
-#   - Aliyun Coding Plan:    https://coding.dashscope.aliyuncs.com/apps/anthropic
-#   - dashscope qwen anthropic-compat (if you have one): https://dashscope.aliyuncs.com/api/.../apps/anthropic
-# If UTU_LLM_BASE_URL is OpenAI-compatible, you'll see a 4xx from the CLI.
-CODING_PLAN_BASE_URL = (
+# Resolution order:
+# 1. ANTHROPIC_BASE_URL_OVERRIDE (explicit)
+# 2. ANTHROPIC_BASE_URL (standard env)
+# 3. default: DashScope Anthropic-compat endpoint
+ANTHROPIC_ENDPOINT = (
     os.environ.get("ANTHROPIC_BASE_URL_OVERRIDE")
     or os.environ.get("ANTHROPIC_BASE_URL")
-    or os.environ.get("UTU_LLM_BASE_URL")
-    or "https://dashscope.aliyuncs.com/api/v2/apps/anthropic"
+    or "https://dashscope.aliyuncs.com/apps/anthropic"
 )
+CODING_PLAN_BASE_URL = ANTHROPIC_ENDPOINT
 TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT", "1800"))
 # 预拷贝的干净数据目录（只含白名单 parquet，无答案文件）
 CLEAN_DATA_BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
