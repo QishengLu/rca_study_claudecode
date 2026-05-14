@@ -235,17 +235,21 @@ def _compress_to_json(
 
     与其他 agent 的 compress_research 步骤等价，但通过 Claude Code CLI 执行。
     """
-    # 构建 investigation context：trajectory 摘要 + 最终分析
+    # 构建 investigation context：完整 trajectory + 最终分析
+    # Aligned with ThinkDepthAI upstream: pass FULL raw trajectory (no truncation,
+    # no last-N limit). Anthropic context window (200K for claude-sonnet-4) is
+    # large enough for all but the most pathological runs; on overflow the API
+    # will return a clear error and we can add per-run fallback then.
     investigation_summary = []
     for msg in trajectory:
         role = msg.get("role", "")
         content = msg.get("content", "")
         if role == "assistant" and content and not content.startswith("[thinking]"):
-            investigation_summary.append(f"[Assistant] {content[:1000]}")
+            investigation_summary.append(f"[Assistant] {content}")
         elif role == "tool":
-            investigation_summary.append(f"[Tool Result] {content[:500]}")
+            investigation_summary.append(f"[Tool Result] {content}")
     investigation_summary.append(f"\n[Final Analysis]\n{result_text}")
-    investigation_context = "\n\n".join(investigation_summary[-30:])
+    investigation_context = "\n\n".join(investigation_summary)
 
     # 组合 prompt：investigation context + compress_up
     compress_prompt = f"{investigation_context}\n\n---\n\n{compress_up}"
