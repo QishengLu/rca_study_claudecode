@@ -5,4 +5,6 @@ description = "Claude Code CLI RCA agent wrapper"
 requires-python = ">=3.10"
 dependencies = [
     "anthropic>=0.80.0",
+    # agent_runner.py reads ANTHROPIC_API_KEY from agents/ClaudeCode/.env via dotenv.
+    "python-dotenv>=1.0",
 ]

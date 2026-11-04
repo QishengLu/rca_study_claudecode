@@ -9,43 +9,41 @@ stdin:  JSON { question, system_prompt, user_prompt,
                compress_system_prompt, compress_user_prompt, data_dir }
 stdout: JSON { output (CausalGraph JSON), trajectory (OpenAI 格式), usage }
 """
+
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+except ImportError:  # narrow: never swallow a real .env parse error
+    print(
+        "[ClaudeCode] python-dotenv is missing, so agents/ClaudeCode/.env will NOT be "
+        "read. Run `uv sync` in agents/ClaudeCode/.",
+        file=sys.stderr,
+    )
 
 
 # ── 配置 ────────────────────────────────────────────────────────────────────
 
-import shutil as _shutil
-CLAUDE_BIN = os.environ.get("CLAUDE_BIN") or _shutil.which("claude") or "claude"
-RCA_MODEL = os.environ.get("UTU_LLM_MODEL", os.environ.get("RCA_MODEL", "qwen3.5-plus"))
-
-# Resolve Anthropic-compat base URL.
-# DashScope provides a working Anthropic-compatible endpoint at
-# `https://dashscope.aliyuncs.com/apps/anthropic` that accepts the standard
-# qwen models (qwen-plus, qwen-max, qwen3-coder-plus, qwen3-max, qwen3.5-plus,
-# qwen-flash). The same DASHSCOPE_API_KEY used for the rest of the framework
-# (compatible-mode OpenAI endpoint) works here — auth is `Authorization: Bearer`.
-#
-# Resolution order:
-# 1. ANTHROPIC_BASE_URL_OVERRIDE (explicit)
-# 2. ANTHROPIC_BASE_URL (standard env)
-# 3. default: DashScope Anthropic-compat endpoint
-ANTHROPIC_ENDPOINT = (
-    os.environ.get("ANTHROPIC_BASE_URL_OVERRIDE")
-    or os.environ.get("ANTHROPIC_BASE_URL")
-    or "https://dashscope.aliyuncs.com/apps/anthropic"
-)
-CODING_PLAN_BASE_URL = ANTHROPIC_ENDPOINT
+CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
+RCA_MODEL = os.environ.get("RCA_MODEL", "qwen3.5-plus")
+# Anthropic-protocol endpoint serving RCA_MODEL (agents/ClaudeCode/.env, see .env.example).
+CODING_PLAN_BASE_URL = os.environ.get("ANTHROPIC_BASE_URL_OVERRIDE", "")
 TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT", "1800"))
 # 预拷贝的干净数据目录（只含白名单 parquet，无答案文件）
 CLEAN_DATA_BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 
 # ── 工具函数 ─────────────────────────────────────────────────────────────────
+
 
 def strip_markdown_json(text: str) -> str:
     """剥离 LLM 返回的 ```json ... ``` 代码块，提取纯 JSON。"""
@@ -72,7 +70,7 @@ def _extract_causal_graph_from_markdown(text: str) -> str | None:
     root_causes = []
     # Pattern: **ts-xxx-service** or `ts-xxx-service` near "root cause"
     for m in re.finditer(
-        r'[Rr]oot\s+[Cc]ause[^{}\n]{0,80}?[\*`]+(ts-[\w-]+|mysql|ts-rabbitmq)[\*`]+',
+        r"[Rr]oot\s+[Cc]ause[^{}\n]{0,80}?[\*`]+(ts-[\w-]+|mysql|ts-rabbitmq)[\*`]+",
         text[:3000],
     ):
         svc = m.group(1).strip()
@@ -81,7 +79,7 @@ def _extract_causal_graph_from_markdown(text: str) -> str | None:
 
     # Fallback: first bold service name in the text
     if not root_causes:
-        m = re.search(r'\*\*(ts-[\w-]+)\*\*', text[:2000])
+        m = re.search(r"\*\*(ts-[\w-]+)\*\*", text[:2000])
         if m:
             root_causes.append(m.group(1))
 
@@ -90,7 +88,7 @@ def _extract_causal_graph_from_markdown(text: str) -> str | None:
 
     # 提取其他被提及的服务名作为 nodes
     all_services = set(root_causes)
-    for m in re.finditer(r'(ts-[\w-]+)', text):
+    for m in re.finditer(r"(ts-[\w-]+)", text):
         all_services.add(m.group(1))
     # 常见非服务名过滤
     all_services -= {"ts-ui-dashboard"}  # 网关，不是独立故障源
@@ -150,35 +148,43 @@ def parse_stream_events(jsonl_path: str):
                         tool_id = block.get("id", "")
                         args_str = json.dumps(tool_input, ensure_ascii=False)
 
-                        trajectory.append({
-                            "role": "assistant",
-                            "content": "",
-                            "tool_calls": [{
-                                "id": tool_id,
-                                "type": "function",
-                                "function": {
-                                    "name": tool_name,
-                                    "arguments": args_str,
-                                },
-                            }],
-                        })
+                        trajectory.append(
+                            {
+                                "role": "assistant",
+                                "content": "",
+                                "tool_calls": [
+                                    {
+                                        "id": tool_id,
+                                        "type": "function",
+                                        "function": {
+                                            "name": tool_name,
+                                            "arguments": args_str,
+                                        },
+                                    }
+                                ],
+                            }
+                        )
 
                     elif block_type == "text":
                         text = block.get("text", "")
                         if text.strip():
-                            trajectory.append({
-                                "role": "assistant",
-                                "content": text,
-                            })
+                            trajectory.append(
+                                {
+                                    "role": "assistant",
+                                    "content": text,
+                                }
+                            )
 
                     elif block_type == "thinking":
                         # thinking 内容记录为 assistant（类似 think_tool）
                         thinking = block.get("thinking", "")
                         if thinking.strip():
-                            trajectory.append({
-                                "role": "assistant",
-                                "content": f"[thinking] {thinking}",
-                            })
+                            trajectory.append(
+                                {
+                                    "role": "assistant",
+                                    "content": f"[thinking] {thinking}",
+                                }
+                            )
 
             elif event_type == "user":
                 # tool results 以 type=user 事件返回
@@ -190,14 +196,17 @@ def parse_stream_events(jsonl_path: str):
                         content = block.get("content", "")
                         if isinstance(content, list):
                             content = "\n".join(
-                                b.get("text", "") for b in content
+                                b.get("text", "")
+                                for b in content
                                 if isinstance(b, dict)
                             )
-                        trajectory.append({
-                            "role": "tool",
-                            "content": str(content)[:5000],  # 截断过长结果
-                            "tool_call_id": tool_id,
-                        })
+                        trajectory.append(
+                            {
+                                "role": "tool",
+                                "content": str(content)[:5000],  # 截断过长结果
+                                "tool_call_id": tool_id,
+                            }
+                        )
 
             elif event_type == "result":
                 result_text = event.get("result", "")
@@ -224,6 +233,35 @@ def parse_stream_events(jsonl_path: str):
     return result_text, trajectory, usage
 
 
+_CLI_FAILURE_MARKERS = (
+    "not logged in",
+    "please run /login",
+    "authenticationerror",
+    "authentication failed",
+    "authentication_failed",
+    "api error 401",
+    "api error 403",
+    "invalid api key",
+    "invalid access token",
+    "token expired",
+    "unauthorized",
+)
+
+
+def _looks_like_cli_failure(text: str) -> bool:
+    lowered = (text or "").lower()
+    if any(marker in lowered for marker in _CLI_FAILURE_MARKERS):
+        return True
+    if re.search(r'"error_status"\s*:\s*40[13]\b', lowered):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:401|403)\b.{0,160}\b(?:auth(?:entication)?|token|unauthori[sz]ed)\b",
+            lowered,
+        )
+    )
+
+
 def _compress_to_json(
     result_text: str,
     trajectory: list,
@@ -235,21 +273,17 @@ def _compress_to_json(
 
     与其他 agent 的 compress_research 步骤等价，但通过 Claude Code CLI 执行。
     """
-    # 构建 investigation context：完整 trajectory + 最终分析
-    # Aligned with ThinkDepthAI upstream: pass FULL raw trajectory (no truncation,
-    # no last-N limit). Anthropic context window (200K for claude-sonnet-4) is
-    # large enough for all but the most pathological runs; on overflow the API
-    # will return a clear error and we can add per-run fallback then.
+    # 构建 investigation context：trajectory 摘要 + 最终分析
     investigation_summary = []
     for msg in trajectory:
         role = msg.get("role", "")
         content = msg.get("content", "")
         if role == "assistant" and content and not content.startswith("[thinking]"):
-            investigation_summary.append(f"[Assistant] {content}")
+            investigation_summary.append(f"[Assistant] {content[:1000]}")
         elif role == "tool":
-            investigation_summary.append(f"[Tool Result] {content}")
+            investigation_summary.append(f"[Tool Result] {content[:500]}")
     investigation_summary.append(f"\n[Final Analysis]\n{result_text}")
-    investigation_context = "\n\n".join(investigation_summary)
+    investigation_context = "\n\n".join(investigation_summary[-30:])
 
     # 组合 prompt：investigation context + compress_up
     compress_prompt = f"{investigation_context}\n\n---\n\n{compress_up}"
@@ -257,12 +291,15 @@ def _compress_to_json(
     import anthropic
 
     client = anthropic.Anthropic(
-        api_key=os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("UTU_LLM_API_KEY") or "",
+        api_key=os.environ["ANTHROPIC_API_KEY"],
         base_url=CODING_PLAN_BASE_URL,
     )
 
     try:
-        print("[ClaudeCode] Compress: calling Anthropic API to extract JSON...", file=sys.stderr)
+        print(
+            "[ClaudeCode] Compress: calling Anthropic API to extract JSON...",
+            file=sys.stderr,
+        )
         resp = client.messages.create(
             model=RCA_MODEL,
             system=compress_sp,
@@ -272,7 +309,7 @@ def _compress_to_json(
             ],
         )
         raw = ""
-        for block in (resp.content or []):
+        for block in resp.content or []:
             if getattr(block, "type", "") == "text":
                 raw = block.text
                 break
@@ -280,9 +317,17 @@ def _compress_to_json(
 
         # 累加 usage
         if resp.usage:
-            usage["total_tokens"] = usage.get("total_tokens", 0) + resp.usage.input_tokens + resp.usage.output_tokens
-            usage["prompt_tokens"] = usage.get("prompt_tokens", 0) + resp.usage.input_tokens
-            usage["completion_tokens"] = usage.get("completion_tokens", 0) + resp.usage.output_tokens
+            usage["total_tokens"] = (
+                usage.get("total_tokens", 0)
+                + resp.usage.input_tokens
+                + resp.usage.output_tokens
+            )
+            usage["prompt_tokens"] = (
+                usage.get("prompt_tokens", 0) + resp.usage.input_tokens
+            )
+            usage["completion_tokens"] = (
+                usage.get("completion_tokens", 0) + resp.usage.output_tokens
+            )
             usage["llm_call_count"] = usage.get("llm_call_count", 0) + 1
 
         obj = json.loads(extracted)
@@ -303,6 +348,7 @@ def _compress_to_json(
 
 # ── 主流程 ────────────────────────────────────────────────────────────────────
 
+
 def _strip_tool_instructions(sp: str) -> str:
     """移除 system prompt 中的 <Available Tools> 段落和工具调用指引。
 
@@ -312,7 +358,11 @@ def _strip_tool_instructions(sp: str) -> str:
     # 移除 <Available Tools>...</Available Tools> 块
     sp = re.sub(r"<Available Tools>.*?</Available Tools>\s*", "", sp, flags=re.DOTALL)
     # 移除引用自定义工具名的行
-    sp = re.sub(r".*(?:list_tables_in_directory|get_schema|query_parquet_files|think_tool).*\n?", "", sp)
+    sp = re.sub(
+        r".*(?:list_tables_in_directory|get_schema|query_parquet_files|think_tool).*\n?",
+        "",
+        sp,
+    )
     # 移除 "Call this FIRST/SECOND" 之类的工具调用顺序指引
     sp = re.sub(r".*Call this (?:FIRST|SECOND).*\n?", "", sp)
     # 清理多余空行
@@ -323,7 +373,11 @@ def _strip_tool_instructions(sp: str) -> str:
 def _strip_tool_instructions_up(up: str) -> str:
     """移除 user prompt 中的工具调用指引，保留调查策略和输出格式。"""
     # 移除明确引用自定义工具名的行
-    up = re.sub(r".*(?:list_tables_in_directory|get_schema|query_parquet_files|think_tool).*\n?", "", up)
+    up = re.sub(
+        r".*(?:list_tables_in_directory|get_schema|query_parquet_files|think_tool).*\n?",
+        "",
+        up,
+    )
     # 移除 "Call `xxx`" 格式的行
     up = re.sub(r"\s*- Call `[^`]+`.*\n?", "", up)
     # 清理多余空行
@@ -332,9 +386,16 @@ def _strip_tool_instructions_up(up: str) -> str:
 
 
 def main():
+    if not (os.environ.get("ANTHROPIC_API_KEY") or "").strip():
+        print(
+            "[ClaudeCode] ANTHROPIC_API_KEY is empty; fill agents/ClaudeCode/.env before rollout",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     payload = json.loads(sys.stdin.read())
 
-    # 复用 RolloutRunner 传入的标准 prompt，只移除工具相关段落
+    # 复用 harness 传入的标准 prompt，只移除工具相关段落
     system_prompt = _strip_tool_instructions(payload["system_prompt"])
     user_prompt = _strip_tool_instructions_up(payload["user_prompt"])
     data_dir = payload.get("data_dir", "")
@@ -349,14 +410,19 @@ def main():
             sandbox_dir = clean_dir
         else:
             # fallback: 运行时拷贝（新 case 或预拷贝缺失）
-            import tempfile, shutil
+            # Build an isolated, telemetry-only working directory.
             sandbox_dir = tempfile.mkdtemp(prefix="rca_sandbox_")
             for fname in [
-                "abnormal_logs.parquet", "normal_logs.parquet",
-                "abnormal_traces.parquet", "normal_traces.parquet",
-                "abnormal_metrics.parquet", "normal_metrics.parquet",
-                "abnormal_metrics_histogram.parquet", "normal_metrics_histogram.parquet",
-                "abnormal_metrics_sum.parquet", "normal_metrics_sum.parquet",
+                "abnormal_logs.parquet",
+                "normal_logs.parquet",
+                "abnormal_traces.parquet",
+                "normal_traces.parquet",
+                "abnormal_metrics.parquet",
+                "normal_metrics.parquet",
+                "abnormal_metrics_histogram.parquet",
+                "normal_metrics_histogram.parquet",
+                "abnormal_metrics_sum.parquet",
+                "normal_metrics_sum.parquet",
             ]:
                 src = os.path.join(data_dir, fname)
                 dst = os.path.join(sandbox_dir, fname)
@@ -381,60 +447,113 @@ def main():
 
     # Bash + Read 开放，禁 Write/Edit（不需要写文件）
     cmd = [
-        CLAUDE_BIN, "-p", user_prompt,
-        "--model", RCA_MODEL,
-        "--system-prompt", system_prompt,
-        "--output-format", "stream-json",
+        CLAUDE_BIN,
+        "-p",
+        user_prompt,
+        "--model",
+        RCA_MODEL,
+        "--system-prompt",
+        system_prompt,
+        "--output-format",
+        "stream-json",
         "--verbose",
         "--bare",
         "--no-session-persistence",
         "--dangerously-skip-permissions",
-        "--allowedTools", "Bash(*)", "Read(*)",
-        "--disallowedTools", "Write(*)", "Edit(*)",
-        "--add-dir", sandbox_dir,
+        "--allowedTools",
+        "Bash(*)",
+        "Read(*)",
+        "--disallowedTools",
+        "Write(*)",
+        "Edit(*)",
+        "--add-dir",
+        sandbox_dir,
     ]
 
-    # 环境变量：Anthropic-compat endpoint + key.
-    # Auto-fall-back ANTHROPIC_API_KEY to UTU_LLM_API_KEY so a single dashscope
-    # qwen key can drive both the rest of the framework AND Claude Code CLI
-    # (provided UTU_LLM_BASE_URL points at an Anthropic-compatible endpoint).
+    # 环境变量：Coding Plan endpoint + key
     env = {**os.environ}
     env["ANTHROPIC_BASE_URL"] = CODING_PLAN_BASE_URL
-    if not env.get("ANTHROPIC_API_KEY"):
-        env["ANTHROPIC_API_KEY"] = env.get("UTU_LLM_API_KEY", "")
+    # Isolate CLI state per process; concurrent rollouts must not race through ~/.claude.
+    claude_config_dir = tempfile.mkdtemp(prefix="claude_rca_config_")
+    env["CLAUDE_CONFIG_DIR"] = claude_config_dir
 
-    print(f"[ClaudeCode] Starting: model={RCA_MODEL}, sandbox={sandbox_dir}",
-          file=sys.stderr)
+    print(
+        f"[ClaudeCode] Starting: model={RCA_MODEL}, sandbox={sandbox_dir}",
+        file=sys.stderr,
+    )
 
     start = time.time()
 
-    with open(stream_file, "w") as out_f:
-        proc = subprocess.run(
-            cmd,
-            stdout=out_f,
-            stderr=subprocess.PIPE,
-            env=env,
-            timeout=TIMEOUT,
-            text=True,
-        )
+    try:
+        with open(stream_file, "w") as out_f:
+            proc = subprocess.run(
+                cmd,
+                stdout=out_f,
+                stderr=subprocess.PIPE,
+                env=env,
+                timeout=TIMEOUT,
+                text=True,
+            )
+    except subprocess.TimeoutExpired:
+        print(f"[ClaudeCode] Timed out after {TIMEOUT}s", file=sys.stderr)
+        if sandbox_dir and sandbox_dir.startswith("/tmp/rca_sandbox_"):
+            shutil.rmtree(sandbox_dir, ignore_errors=True)
+        try:
+            os.unlink(stream_file)
+        except OSError:
+            pass
+        sys.exit(1)
+    finally:
+        shutil.rmtree(claude_config_dir, ignore_errors=True)
 
     elapsed = time.time() - start
-    print(f"[ClaudeCode] Finished in {elapsed:.1f}s, exit={proc.returncode}",
-          file=sys.stderr)
+    print(
+        f"[ClaudeCode] Finished in {elapsed:.1f}s, exit={proc.returncode}",
+        file=sys.stderr,
+    )
 
     # 清理运行时拷贝的临时沙箱（预拷贝目录不删除）
     if sandbox_dir and sandbox_dir.startswith("/tmp/rca_sandbox_"):
-        import shutil
         shutil.rmtree(sandbox_dir, ignore_errors=True)
 
     if proc.returncode != 0:
-        print(f"[ClaudeCode] stderr: {proc.stderr[:2000]}", file=sys.stderr)
-        # 尝试解析已有输出
-        if not os.path.exists(stream_file) or os.path.getsize(stream_file) == 0:
-            sys.exit(1)
+        # The CLI can write its actual error (e.g. an auth failure) to the
+        # stream-json stdout file rather than stderr; proc.stderr alone is
+        # often empty here. Surface whichever channel has content, and run
+        # the same CLI-failure classifier stdout goes through on success.
+        # harness's own subprocess logging truncates our stderr to the
+        # first ~1000 chars, so the classifier verdict is printed before the
+        # (much larger) raw stream dump to guarantee it survives that cap.
+        try:
+            stream_text = open(stream_file, "r", errors="replace").read()
+        except OSError:
+            stream_text = ""
+        print(f"[ClaudeCode] stderr: {proc.stderr[:500]}", file=sys.stderr)
+        if _looks_like_cli_failure(proc.stderr) or _looks_like_cli_failure(stream_text):
+            print(
+                "[ClaudeCode] CLI authentication/API failure; refusing to store it as model output",
+                file=sys.stderr,
+            )
+        if stream_text.strip():
+            print(f"[ClaudeCode] stdout (stream-json) tail: {stream_text[-500:]}", file=sys.stderr)
+        try:
+            os.unlink(stream_file)
+        except OSError:
+            pass
+        sys.exit(1)
 
     # 解析 stream 事件
     result_text, trajectory, usage = parse_stream_events(stream_file)
+    if _looks_like_cli_failure(proc.stderr) or _looks_like_cli_failure(result_text):
+        print(
+            "[ClaudeCode] CLI authentication/API failure; refusing to store it as model output",
+            file=sys.stderr,
+        )
+        try:
+            os.unlink(stream_file)
+        except OSError:
+            pass
+        sys.exit(1)
 
     # 清理临时文件
     try:
@@ -444,6 +563,9 @@ def main():
 
     if not result_text:
         print("[ClaudeCode] No result text found", file=sys.stderr)
+        sys.exit(1)
+    if int(usage.get("llm_call_count") or 0) <= 0:
+        print("[ClaudeCode] No successful LLM call recorded", file=sys.stderr)
         sys.exit(1)
 
     # 提取 CausalGraph JSON：优先直接 parse，失败则用 compress LLM 提取
@@ -462,13 +584,20 @@ def main():
         compress_up = payload.get("compress_user_prompt", "")
         if compress_sp and compress_up:
             final_output = _compress_to_json(
-                result_text, trajectory, compress_sp, compress_up, usage,
+                result_text,
+                trajectory,
+                compress_sp,
+                compress_up,
+                usage,
             )
         else:
             # 无 compress prompt，尝试 regex fallback
             fallback = _extract_causal_graph_from_markdown(result_text)
             if fallback:
-                print("[ClaudeCode] Fallback: regex extraction from markdown", file=sys.stderr)
+                print(
+                    "[ClaudeCode] Fallback: regex extraction from markdown",
+                    file=sys.stderr,
+                )
                 final_output = fallback
             else:
                 print("[ClaudeCode] Failed to extract CausalGraph", file=sys.stderr)

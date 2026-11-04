@@ -1,10 +1,29 @@
-.venv/
+# Python-generated files
 __pycache__/
-*.pyc
-.pytest_cache/
-.mypy_cache/
-*.egg-info/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Runtime data (hard-copied from harness)
+data/
+rca_result*.json
+
+# Environment
 .env
-.env.local
-results/
-output/
+.env.*
+*.env
+!.env.example
+
+# Databases
+*.db
+
+# Logs and run outputs
+*.log
+logs/
+runs/
+eval-data/
