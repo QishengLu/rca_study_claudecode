@@ -6,5 +6,6 @@ requires-python = ">=3.10"
 dependencies = [
     "anthropic>=0.80.0",
     # agent_runner.py reads ANTHROPIC_API_KEY from agents/ClaudeCode/.env via dotenv.
+    "duckdb>=1.4",
     "python-dotenv>=1.0",
 ]
